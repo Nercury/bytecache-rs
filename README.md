@@ -1,0 +1,2 @@
+- [![Build Status](https://travis-ci.org/Nercury/bytecache-rs.svg)](https://travis-ci.org/Nercury/bytecache-rs)
+- [Documentation](http://nercury.github.io/bytecache-rs)
