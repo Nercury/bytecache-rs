@@ -1,0 +1,8 @@
+[package]
+name = "bytecache"
+version = "0.1.0"
+authors = ["Nerijus Arlauskas <nercury@gmail.com>"]
+repository = "https://github.com/Nercury/bytecache-rs"
+license = "MIT"
+description = "Caches bytes to memory and files."
+readme = "README.md"
