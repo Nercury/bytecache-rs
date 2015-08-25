@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
+use std::collections::hash_map;
 use std::hash::Hash;
 use std::borrow::Borrow;
 
@@ -9,31 +9,25 @@ pub enum OutOfMemoryStrategy {
     Restart,
 }
 
-pub enum StoreResult {
-    Stored,
-    OutOfMemory,
-}
-
 use {
-    RequiredBytes,
+    StoreResult,
 };
 
 /// Very simple in-memory cache.
-pub struct MemCache<K, V> {
+pub struct MemCache<K> {
     limit: u64,
     usage: u64,
     strategy: OutOfMemoryStrategy,
-    items: HashMap<K, V>,
+    items: HashMap<K, Vec<u8>>,
 }
 
-impl<K, V> MemCache<K, V>
+impl<K> MemCache<K>
     where
-        K: Eq + Hash,
-        V: RequiredBytes
+        K: Eq + Hash
 {
 
-    pub fn new(limit: u64, strategy: OutOfMemoryStrategy) -> MemCache<K, V> {
-        MemCache::<K, V> {
+    pub fn new(limit: u64, strategy: OutOfMemoryStrategy) -> MemCache<K> {
+        MemCache::<K> {
             limit: limit,
             usage: 0,
             strategy: strategy,
@@ -41,7 +35,7 @@ impl<K, V> MemCache<K, V>
         }
     }
 
-    pub fn with_capacity(limit: u64) -> MemCache<K, V> {
+    pub fn with_capacity(limit: u64) -> MemCache<K> {
         Self::new(limit, OutOfMemoryStrategy::Restart)
     }
 
@@ -66,8 +60,8 @@ impl<K, V> MemCache<K, V>
         self.usage + amount <= self.limit
     }
 
-    pub fn set(&mut self, key: K, value: V) -> StoreResult {
-        let required_memory = value.required_bytes();
+    pub fn set(&mut self, key: K, value: Vec<u8>) -> StoreResult {
+        let required_memory = value.len() as u64;
 
         if !self.can_store_bytes(required_memory) {
             match self.strategy {
@@ -83,11 +77,11 @@ impl<K, V> MemCache<K, V>
         }
 
         match self.items.entry(key) {
-            Entry::Occupied(mut e) => {
+            hash_map::Entry::Occupied(mut e) => {
                 let old = e.insert(value);
-                self.usage -= old.required_bytes();
+                self.usage -= old.len() as u64;
             },
-            Entry::Vacant(e) => {
+            hash_map::Entry::Vacant(e) => {
                 e.insert(value);
             }
         };
@@ -97,7 +91,7 @@ impl<K, V> MemCache<K, V>
         StoreResult::Stored
     }
 
-    pub fn get<A: Borrow<K>>(&self, key: A) -> Option<&V> {
+    pub fn get<A: Borrow<K>>(&self, key: A) -> Option<&Vec<u8>> {
         self.items.get(key.borrow())
     }
 }
@@ -115,7 +109,7 @@ mod test {
 
     #[test]
     fn should_not_get_not_stored() {
-        let mut cache = MemCache::<u8, Vec<u8>>::with_capacity(1000);
+        let cache = MemCache::<u8>::with_capacity(1000);
         assert_eq!(None, cache.get(1));
     }
 
