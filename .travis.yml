@@ -1,17 +1,20 @@
+sudo: false
 language: rust
-rust:
-  - stable
-  - beta
-  - nightly
-  - 1.0.0
-  - 1.1.0
+
+env:
+  global:
+    - CRATE=bytecache
+
 matrix:
   allow_failures:
     - rust: nightly
+  include:
+    - rust: nightly
+      env: DOC=true
+    - rust: beta
+    - rust: stable
+    - rust: 1.1.0
+    - rust: 1.0.0
 
-after_success: |
-    cargo doc \
-    && echo '<meta http-equiv=refresh content=0;url=bytecache/index.html>' > target/doc/index.html && \
-    sudo pip install ghp-import && \
-    ghp-import -n target/doc && \
-    git push -qf https://${TOKEN}@github.com/${TRAVIS_REPO_SLUG}.git gh-pages
+after_success:
+  - /bin/bash export_doc.sh
