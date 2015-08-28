@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["OutOfMemoryStrategy",""]],"struct":[["MemCache","In-memory cache."]]});
