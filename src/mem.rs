@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::collections::hash_map;
 use std::hash::Hash;
 use std::borrow::Borrow;
 
@@ -9,34 +8,37 @@ pub enum OutOfMemoryStrategy {
     Restart,
 }
 
-use {
-    StoreResult,
-};
+use history::History;
+use StoreResult;
 
-/// Very simple in-memory cache.
-pub struct MemCache<K> {
+/// In-memory cache.
+pub struct MemCache<K: Clone> {
     limit: u64,
-    usage: u64,
-    strategy: OutOfMemoryStrategy,
+    history: History<K>,
     items: HashMap<K, Vec<u8>>,
 }
 
-impl<K> MemCache<K>
+impl<K: Clone> MemCache<K>
     where
         K: Eq + Hash
 {
 
-    pub fn new(limit: u64, strategy: OutOfMemoryStrategy) -> MemCache<K> {
+    pub fn new(limit: u64) -> MemCache<K> {
+        let mut bucker_size = limit / 5;
+        if bucker_size == 0 {
+            bucker_size = 1;
+        }
+        let bucket_count = 2;
+
         MemCache::<K> {
             limit: limit,
-            usage: 0,
-            strategy: strategy,
+            history: History::new(bucker_size, bucket_count),
             items: HashMap::new(),
         }
     }
 
     pub fn with_capacity(limit: u64) -> MemCache<K> {
-        Self::new(limit, OutOfMemoryStrategy::Restart)
+        Self::new(limit)
     }
 
     pub fn limit(&self) -> u64 {
@@ -44,72 +46,103 @@ impl<K> MemCache<K>
     }
 
     pub fn usage(&self) -> u64 {
-        self.usage
+        self.history.usage()
     }
 
-    pub fn strategy(&self) -> OutOfMemoryStrategy {
-        self.strategy
+    pub fn detailed_usage(&self) -> Vec<(u64, Option<u64>)> {
+        self.history.detailed_usage()
     }
 
     pub fn clear(&mut self) {
         self.items.clear();
-        self.usage = 0;
+        self.history.clear();
     }
 
     pub fn can_store_bytes(&self, amount: u64) -> bool {
-        self.usage + amount <= self.limit
+        self.usage() + amount <= self.limit
+    }
+
+    fn free_memory(&mut self, required_mem: u64) -> bool {
+        if self.can_store_bytes(required_mem) {
+            return true;
+        }
+
+        let mut spilled = Vec::new();
+        loop {
+            self.history.spill(&mut spilled);
+            for &(ref key, _) in spilled.iter() {
+                self.items.remove(&key);
+            }
+            spilled.clear();
+
+            if spilled.len() == 0 {
+                if !self.can_store_bytes(required_mem) {
+                    return false;
+                } else {
+                    break;
+                }
+            }
+
+            if self.can_store_bytes(required_mem) {
+                break;
+            }
+        }
+
+        true
     }
 
     pub fn set(&mut self, key: K, value: Vec<u8>) -> StoreResult {
-        let required_memory = value.len() as u64;
-
-        if !self.can_store_bytes(required_memory) {
-            match self.strategy {
-                OutOfMemoryStrategy::Fail => return StoreResult::OutOfMemory,
-                OutOfMemoryStrategy::Restart => {
-                    if required_memory <= self.limit {
-                        self.clear();
-                    } else {
-                        return StoreResult::OutOfMemory;
-                    }
-                },
-            };
-        }
-
-        match self.items.entry(key) {
-            hash_map::Entry::Occupied(mut e) => {
-                let old = e.insert(value);
-                self.usage -= old.len() as u64;
-            },
-            hash_map::Entry::Vacant(e) => {
-                e.insert(value);
-            }
+        let new_required_mem = value.len() as u64;
+        let existing_item_memory_use = match self.items.get(&key) {
+            Some(ref v) => Some(v.len() as u64),
+            None => None,
         };
 
-        self.usage += required_memory;
+        let real_required_mem = match existing_item_memory_use {
+            Some(existing) => if existing >= new_required_mem { 0 } else { new_required_mem - existing },
+            None => new_required_mem,
+        };
+
+        if !self.free_memory(real_required_mem) {
+            if let Some(_) = self.items.remove(&key) {
+                self.history.remove(&key);
+            }
+            return StoreResult::OutOfMemory;
+        }
+
+        self.items.insert(key.clone(), value);
+        self.history.hit(key, new_required_mem);
 
         StoreResult::Stored
     }
 
-    pub fn get<A: Borrow<K>>(&self, key: A) -> Option<&Vec<u8>> {
-        self.items.get(key.borrow())
+    /// Get cached value.
+    pub fn get<A: Borrow<K>>(&mut self, key: A) -> Option<&[u8]> {
+        let res = self.items.get(key.borrow());
+
+        if let Some(ref res) = res {
+            self.history.hit(key.borrow().clone(), res.len() as u64);
+        }
+
+        res.map(|v| v.borrow())
     }
 }
 
 #[cfg(test)]
 mod test {
+    use StoreResult;
     use super::*;
 
     #[test]
     fn store_and_get() {
         let mut cache = MemCache::with_capacity(1000);
         cache.set("test", vec![2, 3, 4]);
-        assert_eq!(&vec![2, 3, 4], cache.get("test").unwrap());
+        assert_eq!(&[2, 3, 4], cache.get("test").unwrap());
     }
 
     #[test]
     fn should_not_get_not_stored() {
-        let cache = MemCache::<u8>::with_capacity(1000);
+        let mut cache = MemCache::<u8>::with_capacity(1000);
         assert_eq!(None, cache.get(1));
     }
 
@@ -124,16 +157,16 @@ mod test {
     fn should_store_exactly_fitting() {
         let mut cache = MemCache::with_capacity(3);
         cache.set("test", vec![2, 3, 4]);
-        assert_eq!(&vec![2, 3, 4], cache.get("test").unwrap());
+        assert_eq!(&[2, 3, 4], cache.get("test").unwrap());
     }
 
     #[test]
-    fn should_replace_old_with_new_fitting() {
+    fn prefer_not_storing_new_value_if_it_is_quite_big() {
         let mut cache = MemCache::with_capacity(3);
-        cache.set("test", vec![2, 3]);
-        cache.set("test2", vec![3, 4, 5]);
-        assert_eq!(&vec![3, 4, 5], cache.get("test2").unwrap());
-        assert_eq!(None, cache.get("test"));
+        assert_eq!(StoreResult::Stored, cache.set("test", vec![2, 3]));
+        assert_eq!(StoreResult::OutOfMemory, cache.set("test2", vec![3, 4, 5]));
+        assert_eq!(&[2, 3], cache.get("test").unwrap());
+        assert_eq!(None, cache.get("test2"));
     }
 
     #[test]
@@ -142,6 +175,6 @@ mod test {
         cache.set("test", vec![2, 3]);
         cache.set("test2", vec![3, 4, 5]);
         assert_eq!(None, cache.get("test2"));
-        assert_eq!(&vec![2, 3], cache.get("test").unwrap());
+        assert_eq!(&[2, 3], cache.get("test").unwrap());
     }
 }

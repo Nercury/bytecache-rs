@@ -11,10 +11,19 @@ pub mod file;
 pub mod history;
 
 use std::io::Read;
+use std::io::Write;
 
+#[derive(Debug, Eq, PartialEq)]
 pub enum StoreResult {
     Stored,
     OutOfMemory,
+}
+
+pub enum CreateReaderError {
+}
+
+pub enum CreateWriterError {
+    OutOfMemory(u64),
 }
 
 pub trait RequiredBytes {
@@ -28,11 +37,6 @@ impl RequiredBytes for Vec<u8> {
 }
 
 pub trait ByteCache<K> {
-
-    fn fetch<R>(&self, key: K) -> R
-        where R: Read;
-
-    fn store<R>(&self, key: K, value: R) -> StoreResult
-        where R: Read;
-
+    fn create_reader<R: Read>(&self, key: K) -> Result<R, CreateReaderError>;
+    fn create_writer<W: Write>(&self, key: K, required_mem: u64) -> Result<W, CreateWriterError>;
 }
