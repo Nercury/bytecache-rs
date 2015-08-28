@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::borrow::Borrow;
+use std::io::{ Read, Write };
 
 #[derive(Copy, Clone)]
 pub enum OutOfMemoryStrategy {
@@ -10,6 +11,9 @@ pub enum OutOfMemoryStrategy {
 
 use history::History;
 use StoreResult;
+use Cache;
+use CreateReaderError;
+use CreateWriterError;
 
 /// In-memory cache.
 pub struct MemCache<K: Clone> {
@@ -125,6 +129,16 @@ impl<K: Clone> MemCache<K>
         }
 
         res.map(|v| v.borrow())
+    }
+}
+
+impl<K: Clone> Cache<K> for MemCache<K> {
+    fn fetch<R: Read>(&self, key: K) -> Result<R, CreateReaderError> {
+        Err(CreateReaderError::NotFound)
+    }
+
+    fn store<W: Write>(&self, key: K, required_mem: u64) -> Result<W, CreateWriterError> {
+        Err(CreateWriterError::OutOfMemory)
     }
 }
 

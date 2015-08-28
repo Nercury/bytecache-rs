@@ -19,11 +19,14 @@ pub enum StoreResult {
     OutOfMemory,
 }
 
+#[derive(Debug)]
 pub enum CreateReaderError {
+    NotFound,
 }
 
+#[derive(Debug)]
 pub enum CreateWriterError {
-    OutOfMemory(u64),
+    OutOfMemory,
 }
 
 pub trait RequiredBytes {
@@ -36,7 +39,7 @@ impl RequiredBytes for Vec<u8> {
     }
 }
 
-pub trait ByteCache<K> {
-    fn create_reader<R: Read>(&self, key: K) -> Result<R, CreateReaderError>;
-    fn create_writer<W: Write>(&self, key: K, required_mem: u64) -> Result<W, CreateWriterError>;
+pub trait Cache<K> {
+    fn fetch<R: Read>(&self, key: K) -> Result<R, CreateReaderError>;
+    fn store<W: Write>(&self, key: K, required_mem: u64) -> Result<W, CreateWriterError>;
 }
